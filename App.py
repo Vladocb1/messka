@@ -12,6 +12,31 @@ app.config['SECRET_KEY'] = 'secret!'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 socketio = SocketIO(app)
 
+import os
+
+# === Подключение к PostgreSQL через переменную окружения ===
+DATABASE_URL = os.environ.get('DATABASE_URL', None)
+
+if DATABASE_URL:
+    # Если есть DATABASE_URL (на Render), используем его
+    import dj_database_url
+    # Разбираем URL на части (можно и без этой библиотеки, но с ней проще)
+    # Установи библиотеку: pip install dj-database-url
+    conn_info = dj_database_url.parse(DATABASE_URL)
+    DB_HOST = conn_info['HOST']
+    DB_PORT = conn_info['PORT']
+    DB_NAME = conn_info['NAME']
+    DB_USER = conn_info['USER']
+    DB_PASS = conn_info['PASSWORD']
+else:
+    # Локальные настройки (для твоего компьютера)
+    DB_HOST = 'localhost'
+    DB_PORT = '5432'
+    DB_NAME = 'messka'
+    DB_USER = 'postgres'
+    DB_PASS = 'SudoSQL'  # твой локальный пароль
+
+
 # === PostgreSQL подключение ===
 DB_HOST = 'localhost'
 DB_PORT = '5432'
