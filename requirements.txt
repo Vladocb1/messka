@@ -3,4 +3,3 @@ flask-socketio
 psycopg2-binary
 eventlet
 gunicorn
-dj-database-url

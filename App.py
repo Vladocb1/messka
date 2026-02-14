@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 import os
 import psycopg2
@@ -6,45 +6,37 @@ from psycopg2.extras import RealDictCursor
 from werkzeug.utils import secure_filename
 import base64
 from datetime import datetime
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
 app.config['UPLOAD_FOLDER'] = 'uploads'
 socketio = SocketIO(app)
 
-import os
-
-# === Подключение к PostgreSQL через переменную окружения ===
-DATABASE_URL = os.environ.get('DATABASE_URL', None)
+# === PostgreSQL подключение ===
+# Берём настройки из переменной окружения (на Render) или используем локальные
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 if DATABASE_URL:
-    # Если есть DATABASE_URL (на Render), используем его
-    import dj_database_url
-    # Разбираем URL на части (можно и без этой библиотеки, но с ней проще)
-    # Установи библиотеку: pip install dj-database-url
-    conn_info = dj_database_url.parse(DATABASE_URL)
-    DB_HOST = conn_info['HOST']
-    DB_PORT = conn_info['PORT']
-    DB_NAME = conn_info['NAME']
-    DB_USER = conn_info['USER']
-    DB_PASS = conn_info['PASSWORD']
+    # Режим Render: парсим строку подключения
+    parsed_url = urlparse(DATABASE_URL)
+    DB_HOST = parsed_url.hostname
+    DB_PORT = parsed_url.port
+    DB_NAME = parsed_url.path[1:]  # Убираем первый слеш
+    DB_USER = parsed_url.username
+    DB_PASS = parsed_url.password
+    print("✅ Подключение к базе данных на Render")
 else:
-    # Локальные настройки (для твоего компьютера)
+    # Локальный режим (твой компьютер)
     DB_HOST = 'localhost'
     DB_PORT = '5432'
     DB_NAME = 'messka'
     DB_USER = 'postgres'
     DB_PASS = 'SudoSQL'  # твой локальный пароль
-
-
-# === PostgreSQL подключение ===
-DB_HOST = 'localhost'
-DB_PORT = '5432'
-DB_NAME = 'messka'
-DB_USER = 'postgres'
-DB_PASS = 'SudoSQL'  # ⚠️ ЗАМЕНИ НА СВОЙ
+    print("✅ Подключение к локальной базе данных")
 
 def get_db_connection():
+    """Подключение к БД"""
     return psycopg2.connect(
         host=DB_HOST,
         port=DB_PORT,
@@ -56,60 +48,78 @@ def get_db_connection():
 
 # Создание таблицы с полем avatar
 def init_db():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS messages (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(255) NOT NULL,
-            avatar TEXT,
-            message_text TEXT,
-            filename VARCHAR(255),
-            filepath TEXT,
-            message_type VARCHAR(50) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    cur.close()
-    conn.close()
-    print("✅ Таблица messages готова (с аватарками)")
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) NOT NULL,
+                avatar TEXT,
+                message_text TEXT,
+                filename VARCHAR(255),
+                filepath TEXT,
+                message_type VARCHAR(50) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Таблица messages готова (с аватарками)")
+    except Exception as e:
+        print(f"❌ Ошибка при создании таблицы: {e}")
 
-init_db()
+# Пытаемся инициализировать БД
+try:
+    init_db()
+except Exception as e:
+    print(f"⚠️ Не удалось инициализировать БД: {e}")
 
 # === РАБОТА С БД ===
 def save_message(username, avatar, msg_type, text=None, filename=None, filepath=None):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO messages (username, avatar, message_text, filename, filepath, message_type)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    ''', (username, avatar, text, filename, filepath, msg_type))
-    conn.commit()
-    cur.close()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO messages (username, avatar, message_text, filename, filepath, message_type)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (username, avatar, text, filename, filepath, msg_type))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"✅ Сообщение сохранено: {username}")
+    except Exception as e:
+        print(f"❌ Ошибка сохранения сообщения: {e}")
 
 def get_message_history():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute('''
-        SELECT username, avatar, message_text, filename, filepath, message_type,
-               TO_CHAR(created_at, 'HH24:MI') as formatted_time
-        FROM messages ORDER BY created_at ASC
-    ''')
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    return [{
-        'user': r['username'],
-        'avatar': r['avatar'],
-        'text': r['message_text'],
-        'filename': r['filename'],
-        'filepath': r['filepath'],
-        'type': r['message_type'],
-        'time': r['formatted_time']
-    } for r in rows]
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT username, avatar, message_text, filename, filepath, message_type,
+                   TO_CHAR(created_at, 'HH24:MI') as formatted_time
+            FROM messages ORDER BY created_at ASC
+        ''')
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        messages = []
+        for r in rows:
+            messages.append({
+                'user': r['username'],
+                'avatar': r['avatar'],
+                'text': r['message_text'],
+                'filename': r['filename'],
+                'filepath': r['filepath'],
+                'type': r['message_type'],
+                'time': r['formatted_time']
+            })
+        return messages
+    except Exception as e:
+        print(f"❌ Ошибка загрузки истории: {e}")
+        return []
 
 # === СОКЕТЫ ===
 users = {}  # {sid: {'username': str, 'avatar': str}}
@@ -121,7 +131,7 @@ def index():
 
 @socketio.on('connect')
 def handle_connect():
-    print('Client connected')
+    print('✅ Client connected')
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -153,7 +163,6 @@ def handle_message(data):
         text=data['message']
     )
     
-    # Отправляем всем, включая аватарку
     emit('new_message', {
         'user': user_data['username'],
         'avatar': user_data['avatar'],
@@ -195,4 +204,6 @@ def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0')
+    # Берём порт из окружения (для Render) или 5000 для локальной разработки
+    port = int(os.environ.get('PORT', 5000))
+    socketio.run(app, debug=True, host='0.0.0.0', port=port)
