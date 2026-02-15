@@ -265,48 +265,29 @@
         }
         
         /* ===== КНОПКА ЧТО НОВОГО ===== */
-.whatsnew-button {
-    position: fixed;
-    top: 15px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1001;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 50px;
-    padding: 8px 20px;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-}
-
-.whatsnew-button i {
-    font-size: 1.1rem;
-}
-
-.whatsnew-button:hover {
-    transform: translateX(-50%) scale(1.05);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
-}
-
-/* ===== АДАПТАЦИЯ ДЛЯ ТЕЛЕФОНА ===== */
-@media (max-width: 568px) {
-    .whatsnew-button {
-        top: 8px; /* чуть выше */
-        padding: 5px 12px; /* меньше отступы */
-        font-size: 0.3rem; /* меньше текст */
-        gap: 4px; /* меньше расстояние */
-    }
-    
-    .whatsnew-button i {
-        font-size: 0.4rem; /* меньше иконка */
-    }
-}
+        .whatsnew-button {
+            position: fixed;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1001;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            padding: 8px 20px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .whatsnew-button i {
+            font-size: 1.1rem;
+        }
         
         .whatsnew-button:hover {
             transform: translateX(-50%) scale(1.05);
@@ -1680,12 +1661,6 @@
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     
     <script>
-        // Простые функции для модалки
-        window.onclick = function(event) {
-            const modal = document.getElementById('whatsnewModal');
-            if (event.target == modal) modal.style.display = "none";
-        }
-
         const socket = io();
         let currentUsername = '';
         let currentUserTag = '';
@@ -1698,23 +1673,32 @@
         let settingsAvatar = 'default';
         let usernameAvailable = false;
         let usernameCheckTimer = null;
+        let lastCheckedTag = '';
         let contextMenuTarget = null;
 
         const shownSystemMessages = new Set();
 
         // Контекстное меню
-        document.addEventListener('click', () => document.getElementById('contextMenu').style.display = 'none');
+        document.addEventListener('click', () => {
+            document.getElementById('contextMenu').style.display = 'none';
+        });
 
         document.addEventListener('contextmenu', (e) => {
             const messageElement = e.target.closest('.message');
             if (!messageElement) return;
+            
             e.preventDefault();
             
             const messageId = messageElement.dataset.messageId;
             const isFavorite = messageElement.dataset.isFavorite === 'true';
+            
             if (!messageId) return;
             
-            contextMenuTarget = { element: messageElement, id: parseInt(messageId), isFavorite };
+            contextMenuTarget = {
+                element: messageElement,
+                id: parseInt(messageId),
+                isFavorite: isFavorite
+            };
             
             const menuItem = document.getElementById('addToFavoriteBtn');
             const icon = menuItem.querySelector('i');
@@ -1759,36 +1743,49 @@
                     favIndicator.innerHTML = '<i class="bi bi-star-fill"></i>';
                     timeDiv.appendChild(favIndicator);
                 }
-            } else if (favIndicator) {
-                favIndicator.remove();
+            } else {
+                if (favIndicator) {
+                    favIndicator.remove();
+                }
             }
             
             document.getElementById('contextMenu').style.display = 'none';
         });
 
         // Проверка сессии
-        if (currentSessionToken) socket.emit('check_session', { session_token: currentSessionToken });
+        if (currentSessionToken) {
+            socket.emit('check_session', { session_token: currentSessionToken });
+        }
 
         // ===== ТЕМА =====
         function loadTheme() {
             const savedTheme = localStorage.getItem('messkaTheme') || 'light';
-            if (savedTheme === 'auto') applyAutoTheme();
-            else document.body.className = savedTheme + '-theme';
+            if (savedTheme === 'auto') {
+                applyAutoTheme();
+            } else {
+                document.body.className = savedTheme + '-theme';
+            }
             document.getElementById('themeSelect').value = savedTheme;
         }
 
         function applyAutoTheme() {
             const hour = new Date().getHours();
-            document.body.className = (hour >= 19 || hour <= 6 ? 'dark' : 'light') + '-theme';
+            const isDark = hour >= 19 || hour <= 6;
+            document.body.className = (isDark ? 'dark' : 'light') + '-theme';
         }
 
         function previewTheme(theme) {
-            if (theme === 'auto') applyAutoTheme();
-            else document.body.className = theme + '-theme';
+            if (theme === 'auto') {
+                applyAutoTheme();
+            } else {
+                document.body.className = theme + '-theme';
+            }
         }
 
         window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-            if (localStorage.getItem('messkaTheme') === 'auto') applyAutoTheme();
+            if (localStorage.getItem('messkaTheme') === 'auto') {
+                applyAutoTheme();
+            }
         });
 
         // ===== ПРОВЕРКА ЮЗЕРНЕЙМА =====
@@ -1810,20 +1807,58 @@
                 return;
             }
             
-            if (tag.length < 3 || tag.length > 20) {
-                statusDiv.innerHTML = tag.length < 3 ? '❌ Минимум 3 символа' : '❌ Максимум 20 символов';
+            if (tag.length < 3) {
+                statusDiv.innerHTML = '❌ Минимум 3 символа';
                 statusDiv.style.color = '#dc3545';
                 usernameAvailable = false;
                 return;
             }
             
-            if (usernameCheckTimer) clearTimeout(usernameCheckTimer);
+            if (tag.length > 20) {
+                statusDiv.innerHTML = '❌ Максимум 20 символов';
+                statusDiv.style.color = '#dc3545';
+                usernameAvailable = false;
+                return;
+            }
+            
+            if (tag === lastCheckedTag) {
+                return;
+            }
+            
+            if (usernameCheckTimer) {
+                clearTimeout(usernameCheckTimer);
+            }
             
             statusDiv.innerHTML = '⏳ Проверка...';
             statusDiv.style.color = '#ffc107';
             
-            usernameCheckTimer = setTimeout(() => socket.emit('check_username', { tag }), 500);
+            usernameCheckTimer = setTimeout(() => {
+                socket.emit('check_username', { tag: tag });
+                lastCheckedTag = tag;
+            }, 500);
         }
+
+        socket.on('username_check_result', (data) => {
+            const statusDiv = document.getElementById('usernameStatus');
+            
+            if (data.available) {
+                statusDiv.innerHTML = '✅ Юзернейм свободен';
+                statusDiv.style.color = '#28a745';
+                usernameAvailable = true;
+            } else {
+                if (data.reason === 'taken') {
+                    statusDiv.innerHTML = '❌ Этот юзернейм уже занят';
+                } else {
+                    statusDiv.innerHTML = '❌ Юзернейм недоступен';
+                }
+                statusDiv.style.color = '#dc3545';
+                usernameAvailable = false;
+            }
+            
+            setTimeout(() => {
+                lastCheckedTag = '';
+            }, 2000);
+        });
 
         // ===== НАСТРОЙКИ =====
         function openSettings() {
@@ -1832,9 +1867,13 @@
             document.getElementById('themeSelect').value = localStorage.getItem('messkaTheme') || 'light';
             
             const preview = document.getElementById('settingsAvatarPreview');
-            if (currentAvatar === 'default') preview.innerHTML = 'M';
-            else if (currentAvatar.startsWith('fa-')) preview.innerHTML = `<i class="${currentAvatar}"></i>`;
-            else preview.innerHTML = `<img src="${currentAvatar}" style="width:100%; height:100%; object-fit:cover;">`;
+            if (currentAvatar === 'default') {
+                preview.innerHTML = 'M';
+            } else if (currentAvatar.startsWith('fa-')) {
+                preview.innerHTML = `<i class="${currentAvatar}"></i>`;
+            } else {
+                preview.innerHTML = `<img src="${currentAvatar}" style="width:100%; height:100%; object-fit:cover;">`;
+            }
             
             document.getElementById('settingsModal').style.display = 'block';
         }
@@ -1842,13 +1881,18 @@
         function closeSettings() {
             document.getElementById('settingsModal').style.display = 'none';
             const savedTheme = localStorage.getItem('messkaTheme') || 'light';
-            if (savedTheme === 'auto') applyAutoTheme();
-            else document.body.className = savedTheme + '-theme';
+            if (savedTheme === 'auto') {
+                applyAutoTheme();
+            } else {
+                document.body.className = savedTheme + '-theme';
+            }
         }
 
         function selectSettingsAvatar(avatar, element) {
             settingsAvatar = avatar;
-            document.querySelectorAll('#settingsModal .avatar-option').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('#settingsModal .avatar-option').forEach(el => {
+                el.classList.remove('selected');
+            });
             element.classList.add('selected');
             
             const preview = document.getElementById('settingsAvatarPreview');
@@ -1867,7 +1911,8 @@
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     settingsAvatar = e.target.result;
-                    document.getElementById('settingsAvatarPreview').innerHTML = `<img src="${e.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+                    const preview = document.getElementById('settingsAvatarPreview');
+                    preview.innerHTML = `<img src="${e.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
                 };
                 reader.readAsDataURL(file);
             }
@@ -1884,25 +1929,47 @@
             }
             
             localStorage.setItem('messkaTheme', newTheme);
-            if (newTheme === 'auto') applyAutoTheme();
-            else document.body.className = newTheme + '-theme';
+            if (newTheme === 'auto') {
+                applyAutoTheme();
+            } else {
+                document.body.className = newTheme + '-theme';
+            }
             
             if (newName && newName !== currentUsername && currentUsername) {
                 const oldName = currentUsername;
                 currentUsername = newName;
-                socket.emit('update_profile', { username: newName, tag: currentUserTag, avatar: currentAvatar, oldUsername: oldName });
+                
+                socket.emit('update_profile', { 
+                    username: newName,
+                    tag: currentUserTag,
+                    avatar: currentAvatar,
+                    oldUsername: oldName
+                });
+                
                 addSystemMessage(`✨ Ваше имя изменено на ${newName}`);
             }
             
             if (newTag && newTag !== currentUserTag && currentUsername) {
                 currentUserTag = newTag;
-                socket.emit('update_profile', { username: currentUsername, tag: newTag, avatar: currentAvatar });
+                
+                socket.emit('update_profile', { 
+                    username: currentUsername,
+                    tag: newTag,
+                    avatar: currentAvatar
+                });
+                
                 addSystemMessage(`🆔 Ваш юзернейм: @${newTag}`);
             }
             
             if (settingsAvatar !== currentAvatar && currentUsername) {
                 currentAvatar = settingsAvatar;
-                socket.emit('update_profile', { username: currentUsername, tag: currentUserTag, avatar: currentAvatar });
+                
+                socket.emit('update_profile', { 
+                    username: currentUsername,
+                    tag: currentUserTag,
+                    avatar: currentAvatar
+                });
+                
                 addSystemMessage(`🖼️ Ваша аватарка обновлена`);
             }
             
@@ -1916,25 +1983,31 @@
             document.getElementById('searchResults').innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">Введите юзернейм для поиска</div>';
         }
 
-        function closeFindPeople() { document.getElementById('findPeopleModal').style.display = 'none'; }
+        function closeFindPeople() {
+            document.getElementById('findPeopleModal').style.display = 'none';
+        }
 
         function searchUsers() {
             const searchTag = document.getElementById('searchUsernameInput').value.trim().toLowerCase();
+            const resultsDiv = document.getElementById('searchResults');
+            
             if (!searchTag) {
-                document.getElementById('searchResults').innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">Введите юзернейм для поиска</div>';
+                resultsDiv.innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">Введите юзернейм для поиска</div>';
                 return;
             }
+            
             socket.emit('search_users', { tag: searchTag });
         }
 
         function startPrivateChat(tag) {
-            socket.emit('start_private_chat', { tag });
+            socket.emit('start_private_chat', { tag: tag });
             closeFindPeople();
         }
 
         // ===== ИЗБРАННОЕ =====
         function loadFavoritesList() {
-            document.getElementById('favoritesListContainer').innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">⏳ Загрузка...</div>';
+            const favContainer = document.getElementById('favoritesListContainer');
+            favContainer.innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">⏳ Загрузка...</div>';
             socket.emit('get_favorites');
         }
 
@@ -1946,7 +2019,9 @@
                     if (msgElement) {
                         msgElement.style.backgroundColor = 'rgba(102, 126, 234, 0.2)';
                         msgElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        setTimeout(() => msgElement.style.backgroundColor = '', 2000);
+                        setTimeout(() => {
+                            msgElement.style.backgroundColor = '';
+                        }, 2000);
                     }
                 }, 500);
             } else {
@@ -1974,45 +2049,83 @@
             const name = document.getElementById('registerName').value.trim();
             const tag = document.getElementById('registerTag').value.trim().toLowerCase();
             
-            if (!name) { alert('Введите имя!'); return; }
-            if (!tag) { alert('Введите юзернейм!'); return; }
-            if (!usernameAvailable) { alert('Юзернейм недоступен. Выберите другой.'); return; }
+            if (!name) {
+                alert('Введите имя!');
+                return;
+            }
+            
+            if (!tag) {
+                alert('Введите юзернейм!');
+                return;
+            }
+            
+            if (!usernameAvailable) {
+                alert('Юзернейм недоступен. Выберите другой.');
+                return;
+            }
             
             currentUsername = name;
             currentUserTag = tag;
             
-            socket.emit('register', { username: name, tag, avatar: currentAvatar });
+            socket.emit('register', {
+                username: name,
+                tag: tag,
+                avatar: currentAvatar
+            });
         }
 
         // ===== СИСТЕМНЫЕ СООБЩЕНИЯ =====
         function addSystemMessage(text) {
-            if (shownSystemMessages.has(text)) return;
-            shownSystemMessages.add(text);
-            setTimeout(() => shownSystemMessages.delete(text), 2000);
+            const messageKey = text;
+            
+            if (shownSystemMessages.has(messageKey)) {
+                return;
+            }
+            
+            shownSystemMessages.add(messageKey);
+            
+            setTimeout(() => {
+                shownSystemMessages.delete(messageKey);
+            }, 2000);
             
             const messagesDiv = document.getElementById('messages');
             const msgDiv = document.createElement('div');
             msgDiv.className = 'system-message';
-            msgDiv.innerHTML = `<i class="bi bi-terminal-fill system-icon"></i><span>${text}</span>`;
+            msgDiv.innerHTML = `
+                <i class="bi bi-terminal-fill system-icon"></i>
+                <span>${text}</span>
+            `;
             messagesDiv.appendChild(msgDiv);
-            document.getElementById('messagesContainer').scrollTop = messagesDiv.scrollHeight;
+            document.getElementById('messagesContainer').scrollTop = document.getElementById('messagesContainer').scrollHeight;
+            
             updateLastMessage('system', text);
         }
 
         // ===== САЙДБАР =====
-        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
-        function goBackToChats() { document.getElementById('sidebar').classList.add('open'); }
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+        }
+
+        function goBackToChats() {
+            document.getElementById('sidebar').classList.add('open');
+        }
 
         function selectChat(chatId, chatData = null) {
-            document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.chat-item').forEach(el => {
+                el.classList.remove('active');
+            });
+            
             const chatElement = document.querySelector(`[data-chat="${chatId}"]`);
-            if (chatElement) chatElement.classList.add('active');
+            if (chatElement) {
+                chatElement.classList.add('active');
+            }
             
             if (chatId === 'general') {
                 currentChat = 'general';
                 document.getElementById('currentChatName').textContent = 'Общий чат';
                 document.getElementById('currentChatStatus').innerHTML = `<span id="userCount">${Object.keys(users).length}</span> участников онлайн`;
                 document.getElementById('currentChatAvatar').innerHTML = '<i class="bi bi-people-fill"></i>';
+                
                 document.getElementById('messages').innerHTML = '';
                 socket.emit('get_message_history');
                 addSystemMessage('📍 Вы в общем чате');
@@ -2021,23 +2134,33 @@
                 document.getElementById('currentChatName').textContent = chatData.username;
                 document.getElementById('currentChatStatus').textContent = `@${chatData.tag}`;
                 
-                if (chatData.avatar === 'default') document.getElementById('currentChatAvatar').innerHTML = 'M';
-                else if (chatData.avatar.startsWith('fa-')) document.getElementById('currentChatAvatar').innerHTML = `<i class="${chatData.avatar}"></i>`;
-                else document.getElementById('currentChatAvatar').innerHTML = `<img src="${chatData.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+                if (chatData.avatar === 'default') {
+                    document.getElementById('currentChatAvatar').innerHTML = 'M';
+                } else if (chatData.avatar.startsWith('fa-')) {
+                    document.getElementById('currentChatAvatar').innerHTML = `<i class="${chatData.avatar}"></i>`;
+                } else {
+                    document.getElementById('currentChatAvatar').innerHTML = `<img src="${chatData.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+                }
                 
                 document.getElementById('messages').innerHTML = '';
+                
                 socket.emit('join_private_chat', { chat_id: chatId });
                 socket.emit('get_private_chat_history', { chat_id: chatId });
+                
                 addSystemMessage(`💬 Личный чат с @${chatData.tag}`);
             }
             
-            if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+            if (window.innerWidth <= 768) {
+                document.getElementById('sidebar').classList.remove('open');
+            }
         }
 
         // ===== АВАТАРКИ =====
         function selectAvatar(avatar, element) {
             currentAvatar = avatar;
-            document.querySelectorAll('.avatar-option').forEach(el => el.classList.remove('selected'));
+            document.querySelectorAll('.avatar-option').forEach(el => {
+                el.classList.remove('selected');
+            });
             element.classList.add('selected');
         }
 
@@ -2048,15 +2171,19 @@
                 reader.onload = (e) => {
                     currentAvatar = e.target.result;
                     const avatarGrid = document.getElementById('avatarGrid');
+                    
                     const newAvatar = document.createElement('div');
                     newAvatar.className = 'avatar-option selected';
                     newAvatar.style.backgroundImage = `url(${e.target.result})`;
                     newAvatar.style.backgroundSize = 'cover';
                     newAvatar.style.backgroundPosition = 'center';
                     newAvatar.onclick = () => selectAvatar(e.target.result, newAvatar);
+                    
                     avatarGrid.appendChild(newAvatar);
                     
-                    document.querySelectorAll('.avatar-option').forEach(el => el.classList.remove('selected'));
+                    document.querySelectorAll('.avatar-option').forEach(el => {
+                        el.classList.remove('selected');
+                    });
                     newAvatar.classList.add('selected');
                 };
                 reader.readAsDataURL(file);
@@ -2064,19 +2191,30 @@
         }
 
         function getAvatarHtml(avatar) {
-            if (avatar === 'default') return '<div class="message-avatar">M</div>';
-            if (avatar?.startsWith('fa-')) return `<div class="message-avatar"><i class="${avatar}"></i></div>`;
-            if (avatar) return `<div class="message-avatar"><img src="${avatar}" alt="avatar"></div>`;
-            return '<div class="message-avatar">M</div>';
+            if (avatar === 'default') {
+                return '<div class="message-avatar">M</div>';
+            } else if (avatar && avatar.startsWith('fa-')) {
+                return `<div class="message-avatar"><i class="${avatar}"></i></div>`;
+            } else if (avatar) {
+                return `<div class="message-avatar"><img src="${avatar}" alt="avatar"></div>`;
+            } else {
+                return '<div class="message-avatar">M</div>';
+            }
         }
 
         // ===== ФАЙЛЫ =====
         function handleFileSelect(input) {
-            selectedFile = input.files.length > 0 ? input.files[0] : null;
+            if (input.files.length > 0) {
+                selectedFile = input.files[0];
+            } else {
+                selectedFile = null;
+            }
         }
 
         // ===== СОКЕТЫ =====
-        socket.on('connect', () => addSystemMessage('✅ Подключено к серверу'));
+        socket.on('connect', () => {
+            addSystemMessage('✅ Подключено к серверу');
+        });
 
         socket.on('session_result', (data) => {
             if (data.has_session) {
@@ -2088,23 +2226,9 @@
                 
                 document.getElementById('loginSection').style.display = 'none';
                 document.getElementById('chatSection').style.display = 'flex';
+                
                 addSystemMessage(`✨ С возвращением, ${currentUsername} (@${currentUserTag})`);
                 socket.emit('get_private_chats');
-            }
-        });
-
-        socket.on('username_check_result', (data) => {
-            const statusDiv = document.getElementById('usernameStatus');
-            if (data.available) {
-                statusDiv.innerHTML = '✅ Юзернейм свободен';
-                statusDiv.style.color = '#28a745';
-                usernameAvailable = true;
-            } else {
-                statusDiv.innerHTML = '❌ ' + (data.reason === 'taken' ? 'Этот юзернейм уже занят' : 
-                    data.reason === 'invalid_chars' ? 'Только латиница, цифры и _' : 
-                    data.reason === 'too_short' ? 'Минимум 3 символа' : 'Недопустимый юзернейм');
-                statusDiv.style.color = '#dc3545';
-                usernameAvailable = false;
             }
         });
 
@@ -2114,10 +2238,12 @@
             currentAvatar = data.user.avatar;
             currentUserId = data.user.id;
             currentSessionToken = data.user.token;
+            
             localStorage.setItem('messka_session', currentSessionToken);
             
             document.getElementById('loginSection').style.display = 'none';
             document.getElementById('chatSection').style.display = 'flex';
+            
             addSystemMessage(`✨ Добро пожаловать, ${currentUsername} (@${currentUserTag})`);
             socket.emit('get_private_chats');
         });
@@ -2128,7 +2254,9 @@
                 usernameAvailable = false;
                 document.getElementById('usernameStatus').innerHTML = '❌ Юзернейм занят';
                 document.getElementById('usernameStatus').style.color = '#dc3545';
-            } else alert(data.message || 'Ошибка регистрации');
+            } else {
+                alert(data.message || 'Ошибка регистрации');
+            }
         });
 
         socket.on('new_message', (msg) => {
@@ -2139,7 +2267,9 @@
         });
 
         socket.on('new_private_message', (msg) => {
-            if (currentChat === msg.chat_id) displayPrivateMessage(msg);
+            if (currentChat === msg.chat_id) {
+                displayPrivateMessage(msg);
+            }
             updatePrivateChatPreview(msg.chat_id, msg);
         });
 
@@ -2164,9 +2294,13 @@
             chatItem.onclick = () => selectChat(data.chat_id, data.user);
             
             let avatarHtml = '';
-            if (data.user.avatar === 'default') avatarHtml = 'M';
-            else if (data.user.avatar.startsWith('fa-')) avatarHtml = `<i class="${data.user.avatar}"></i>`;
-            else avatarHtml = `<img src="${data.user.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+            if (data.user.avatar === 'default') {
+                avatarHtml = 'M';
+            } else if (data.user.avatar.startsWith('fa-')) {
+                avatarHtml = `<i class="${data.user.avatar}"></i>`;
+            } else {
+                avatarHtml = `<img src="${data.user.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+            }
             
             chatItem.innerHTML = `
                 <div class="chat-avatar">${avatarHtml}</div>
@@ -2180,6 +2314,7 @@
             
             document.getElementById('chatsList').appendChild(chatItem);
             selectChat(data.chat_id, data.user);
+            
             data.history.forEach(msg => displayPrivateMessage(msg));
         });
 
@@ -2205,9 +2340,13 @@
                 const unreadHtml = chat.unread_count > 0 ? `<span class="unread-badge">${chat.unread_count}</span>` : '';
                 
                 let avatarHtml = '';
-                if (chat.avatar === 'default') avatarHtml = 'M';
-                else if (chat.avatar.startsWith('fa-')) avatarHtml = `<i class="${chat.avatar}"></i>`;
-                else avatarHtml = `<img src="${chat.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+                if (chat.avatar === 'default') {
+                    avatarHtml = 'M';
+                } else if (chat.avatar.startsWith('fa-')) {
+                    avatarHtml = `<i class="${chat.avatar}"></i>`;
+                } else {
+                    avatarHtml = `<img src="${chat.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+                }
                 
                 chatItem.innerHTML = `
                     <div class="chat-avatar">${avatarHtml}</div>
@@ -2225,6 +2364,7 @@
 
         socket.on('search_results', (results) => {
             const resultsDiv = document.getElementById('searchResults');
+            
             if (!results || results.length === 0) {
                 resultsDiv.innerHTML = '<div style="text-align: center; color: #dc3545; padding: 20px;">Пользователей не найдено</div>';
                 return;
@@ -2233,9 +2373,13 @@
             let html = '';
             results.forEach(user => {
                 let avatarHtml = '';
-                if (user.avatar === 'default') avatarHtml = 'M';
-                else if (user.avatar.startsWith('fa-')) avatarHtml = `<i class="${user.avatar}"></i>`;
-                else avatarHtml = `<img src="${user.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+                if (user.avatar === 'default') {
+                    avatarHtml = 'M';
+                } else if (user.avatar.startsWith('fa-')) {
+                    avatarHtml = `<i class="${user.avatar}"></i>`;
+                } else {
+                    avatarHtml = `<img src="${user.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+                }
                 
                 html += `
                     <div style="display: flex; align-items: center; gap: 10px; padding: 10px; border-bottom: 1px solid #eee;">
@@ -2248,11 +2392,13 @@
                     </div>
                 `;
             });
+            
             resultsDiv.innerHTML = html;
         });
 
         socket.on('favorites_list', (favorites) => {
             const favContainer = document.getElementById('favoritesListContainer');
+            
             if (!favorites || favorites.length === 0) {
                 favContainer.innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">📭 Нет избранных сообщений</div>';
                 return;
@@ -2275,6 +2421,7 @@
                     </div>
                 `;
             });
+            
             favContainer.innerHTML = html;
         });
 
@@ -2286,7 +2433,9 @@
                     if (msgElement) {
                         msgElement.style.backgroundColor = 'rgba(102, 126, 234, 0.2)';
                         msgElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        setTimeout(() => msgElement.style.backgroundColor = '', 2000);
+                        setTimeout(() => {
+                            msgElement.style.backgroundColor = '';
+                        }, 2000);
                     }
                 }, 500);
             }
@@ -2307,16 +2456,22 @@
                         favIndicator.innerHTML = '<i class="bi bi-star-fill"></i>';
                         timeDiv.appendChild(favIndicator);
                     }
-                } else if (favIndicator) {
-                    favIndicator.remove();
+                } else {
+                    if (favIndicator) {
+                        favIndicator.remove();
+                    }
                 }
             }
         });
 
         socket.on('user_joined', (data) => {
-            users[data.username] = { tag: data.tag || '', avatar: data.avatar || 'default' };
+            const username = data.username;
+            const tag = data.tag || '';
+            const avatar = data.avatar || 'default';
+            
+            users[username] = { tag, avatar };
             updateUserCount();
-            addSystemMessage(`👋 ${data.username} присоединился к чату${data.tag ? ' (@' + data.tag + ')' : ''}`);
+            addSystemMessage(`👋 ${username} присоединился к чату${tag ? ' (@' + tag + ')' : ''}`);
         });
 
         socket.on('user_left', (username) => {
@@ -2333,14 +2488,20 @@
                 }
                 addSystemMessage(`👤 ${data.old_username} → ${data.new_username}`);
             }
-            if (data.new_tag) addSystemMessage(`🆔 @${data.new_tag}`);
+            
+            if (data.new_tag) {
+                addSystemMessage(`🆔 @${data.new_tag}`);
+            }
         });
 
         // ===== ОТПРАВКА СООБЩЕНИЙ =====
         function sendMessage() {
             if (selectedFile) {
-                if (currentChat === 'general') sendFile();
-                else sendPrivateFile();
+                if (currentChat === 'general') {
+                    sendFile();
+                } else {
+                    sendPrivateFile();
+                }
                 return;
             }
             
@@ -2348,9 +2509,16 @@
             if (!message || !currentUsername) return;
             
             if (currentChat === 'general') {
-                socket.emit('send_message', { message, avatar: currentAvatar, tag: currentUserTag });
+                socket.emit('send_message', { 
+                    message: message,
+                    avatar: currentAvatar,
+                    tag: currentUserTag
+                });
             } else {
-                socket.emit('send_private_message', { chat_id: currentChat, message });
+                socket.emit('send_private_message', {
+                    chat_id: currentChat,
+                    message: message
+                });
             }
             
             document.getElementById('message').value = '';
@@ -2358,6 +2526,7 @@
 
         function sendFile() {
             if (!selectedFile || !currentUsername) return;
+            
             if (selectedFile.size > 5 * 1024 * 1024) {
                 alert('Файл слишком большой! Максимум 5 МБ');
                 selectedFile = null;
@@ -2367,7 +2536,12 @@
             
             const reader = new FileReader();
             reader.onload = (e) => {
-                socket.emit('send_file', { filename: selectedFile.name, file: e.target.result, avatar: currentAvatar, tag: currentUserTag });
+                socket.emit('send_file', {
+                    filename: selectedFile.name,
+                    file: e.target.result,
+                    avatar: currentAvatar,
+                    tag: currentUserTag
+                });
                 selectedFile = null;
                 document.getElementById('fileInputMinimal').value = '';
             };
@@ -2376,6 +2550,7 @@
 
         function sendPrivateFile() {
             if (!selectedFile || !currentUsername) return;
+            
             if (selectedFile.size > 5 * 1024 * 1024) {
                 alert('Файл слишком большой! Максимум 5 МБ');
                 selectedFile = null;
@@ -2385,7 +2560,11 @@
             
             const reader = new FileReader();
             reader.onload = (e) => {
-                socket.emit('send_private_file', { chat_id: currentChat, filename: selectedFile.name, file: e.target.result });
+                socket.emit('send_private_file', {
+                    chat_id: currentChat,
+                    filename: selectedFile.name,
+                    file: e.target.result
+                });
                 selectedFile = null;
                 document.getElementById('fileInputMinimal').value = '';
             };
@@ -2400,19 +2579,50 @@
             
             const time = msg.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const isMine = msg.user === currentUsername;
+            
             msgDiv.className = `message ${isMine ? 'my-message' : ''}`;
             
             const avatarHtml = getAvatarHtml(msg.avatar);
-            const favStar = msg.is_favorite ? '<span class="favorite-indicator"><i class="bi bi-star-fill"></i></span>' : '';
             
             if (msg.type === 'text') {
-                msgDiv.innerHTML = `${avatarHtml}<div class="message-content" oncontextmenu="event.preventDefault();"><div class="message-user">${msg.user}${msg.tag ? `<span class="message-username">@${msg.tag}</span>` : ''}</div><div class="message-text">${msg.text}</div><div class="message-time">${time}${favStar}</div></div>`;
+                msgDiv.innerHTML = `
+                    ${avatarHtml}
+                    <div class="message-content" oncontextmenu="event.preventDefault();">
+                        <div class="message-user">
+                            ${msg.user}
+                            ${msg.tag ? `<span class="message-username">@${msg.tag}</span>` : ''}
+                        </div>
+                        <div class="message-text">${msg.text}</div>
+                        <div class="message-time">
+                            ${time}
+                            ${msg.is_favorite ? '<span class="favorite-indicator"><i class="bi bi-star-fill"></i></span>' : ''}
+                        </div>
+                    </div>
+                `;
             } else {
-                msgDiv.innerHTML = `${avatarHtml}<div class="message-content file-message" oncontextmenu="event.preventDefault();"><div class="message-user">${msg.user}${msg.tag ? `<span class="message-username">@${msg.tag}</span>` : ''}</div><div class="message-text"><i class="bi bi-file-earmark me-1"></i><a href="${msg.filepath}" download="${msg.filename}" style="color: inherit; text-decoration: underline;">${msg.filename}</a></div><div class="message-time">${time}${favStar}</div></div>`;
+                msgDiv.innerHTML = `
+                    ${avatarHtml}
+                    <div class="message-content file-message" oncontextmenu="event.preventDefault();">
+                        <div class="message-user">
+                            ${msg.user}
+                            ${msg.tag ? `<span class="message-username">@${msg.tag}</span>` : ''}
+                        </div>
+                        <div class="message-text">
+                            <i class="bi bi-file-earmark me-1"></i>
+                            <a href="${msg.filepath}" download="${msg.filename}" style="color: inherit; text-decoration: underline;">
+                                ${msg.filename}
+                            </a>
+                        </div>
+                        <div class="message-time">
+                            ${time}
+                            ${msg.is_favorite ? '<span class="favorite-indicator"><i class="bi bi-star-fill"></i></span>' : ''}
+                        </div>
+                    </div>
+                `;
             }
             
             messagesDiv.appendChild(msgDiv);
-            document.getElementById('messagesContainer').scrollTop = messagesDiv.scrollHeight;
+            document.getElementById('messagesContainer').scrollTop = document.getElementById('messagesContainer').scrollHeight;
         }
 
         function displayPrivateMessage(msg) {
@@ -2423,19 +2633,50 @@
             
             const time = msg.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             const isMine = msg.sender_id === currentUserId;
+            
             msgDiv.className = `message ${isMine ? 'my-message' : ''}`;
             
             const avatarHtml = getAvatarHtml(msg.sender_avatar);
-            const favStar = msg.is_favorite ? '<span class="favorite-indicator"><i class="bi bi-star-fill"></i></span>' : '';
             
             if (msg.type === 'text') {
-                msgDiv.innerHTML = `${avatarHtml}<div class="message-content" oncontextmenu="event.preventDefault();"><div class="message-user">${msg.sender_name}<span class="message-username">@${msg.sender_tag}</span></div><div class="message-text">${msg.text}</div><div class="message-time">${time}${favStar}</div></div>`;
+                msgDiv.innerHTML = `
+                    ${avatarHtml}
+                    <div class="message-content" oncontextmenu="event.preventDefault();">
+                        <div class="message-user">
+                            ${msg.sender_name}
+                            <span class="message-username">@${msg.sender_tag}</span>
+                        </div>
+                        <div class="message-text">${msg.text}</div>
+                        <div class="message-time">
+                            ${time}
+                            ${msg.is_favorite ? '<span class="favorite-indicator"><i class="bi bi-star-fill"></i></span>' : ''}
+                        </div>
+                    </div>
+                `;
             } else {
-                msgDiv.innerHTML = `${avatarHtml}<div class="message-content file-message" oncontextmenu="event.preventDefault();"><div class="message-user">${msg.sender_name}<span class="message-username">@${msg.sender_tag}</span></div><div class="message-text"><i class="bi bi-file-earmark me-1"></i><a href="${msg.filepath}" download="${msg.filename}" style="color: inherit; text-decoration: underline;">${msg.filename}</a></div><div class="message-time">${time}${favStar}</div></div>`;
+                msgDiv.innerHTML = `
+                    ${avatarHtml}
+                    <div class="message-content file-message" oncontextmenu="event.preventDefault();">
+                        <div class="message-user">
+                            ${msg.sender_name}
+                            <span class="message-username">@${msg.sender_tag}</span>
+                        </div>
+                        <div class="message-text">
+                            <i class="bi bi-file-earmark me-1"></i>
+                            <a href="${msg.filepath}" download="${msg.filename}" style="color: inherit; text-decoration: underline;">
+                                ${msg.filename}
+                            </a>
+                        </div>
+                        <div class="message-time">
+                            ${time}
+                            ${msg.is_favorite ? '<span class="favorite-indicator"><i class="bi bi-star-fill"></i></span>' : ''}
+                        </div>
+                    </div>
+                `;
             }
             
             messagesDiv.appendChild(msgDiv);
-            document.getElementById('messagesContainer').scrollTop = messagesDiv.scrollHeight;
+            document.getElementById('messagesContainer').scrollTop = document.getElementById('messagesContainer').scrollHeight;
         }
 
         function updatePrivateChatPreview(chatId, msg) {
@@ -2449,19 +2690,25 @@
                 
                 if (msg.sender_id !== currentUserId) {
                     const unreadBadge = time.querySelector('.unread-badge');
-                    if (unreadBadge) unreadBadge.textContent = parseInt(unreadBadge.textContent || 0) + 1;
-                    else time.innerHTML += ' <span class="unread-badge">1</span>';
+                    if (unreadBadge) {
+                        unreadBadge.textContent = parseInt(unreadBadge.textContent || 0) + 1;
+                    } else {
+                        time.innerHTML += ' <span class="unread-badge">1</span>';
+                    }
                 }
             }
         }
 
         function logout() {
             localStorage.removeItem('messka_session');
-            currentUsername = currentUserTag = '';
-            currentUserId = currentSessionToken = null;
+            currentUsername = '';
+            currentUserTag = '';
+            currentUserId = null;
+            currentSessionToken = null;
             document.getElementById('loginSection').style.display = 'flex';
             document.getElementById('chatSection').style.display = 'none';
-            document.getElementById('registerName').value = document.getElementById('registerTag').value = '';
+            document.getElementById('registerName').value = '';
+            document.getElementById('registerTag').value = '';
             document.getElementById('messages').innerHTML = '';
             addSystemMessage('👋 Вы вышли из чата');
         }
@@ -2472,14 +2719,28 @@
         }
 
         function updateLastMessage(sender, text) {
-            document.getElementById('generalPreview').textContent = sender === 'system' ? text : `${sender}: ${text}`;
-            document.getElementById('generalTime').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const preview = document.getElementById('generalPreview');
+            const time = document.getElementById('generalTime');
+            
+            if (sender === 'system') {
+                preview.textContent = text;
+            } else {
+                preview.textContent = `${sender}: ${text}`;
+            }
+            
+            const now = new Date();
+            time.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
         function filterChats() {
             const search = document.getElementById('searchInput').value.toLowerCase();
             document.querySelectorAll('.chat-item').forEach(el => {
-                el.style.display = el.querySelector('.chat-name').textContent.toLowerCase().includes(search) ? 'flex' : 'none';
+                const name = el.querySelector('.chat-name').textContent.toLowerCase();
+                if (name.includes(search)) {
+                    el.style.display = 'flex';
+                } else {
+                    el.style.display = 'none';
+                }
             });
         }
 
