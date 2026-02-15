@@ -16,7 +16,6 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = secrets.token_hex(32)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
 
 # === PostgreSQL подключение ===
@@ -48,133 +47,22 @@ def get_db_connection():
         cursor_factory=RealDictCursor
     )
 
-# === ИНИЦИАЛИЗАЦИЯ БД ===
-def init_db():
+# === ТОЛЬКО ПРОВЕРКА ПОДКЛЮЧЕНИЯ ===
+def check_db_connection():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
-        # Таблица пользователей
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                socket_id VARCHAR(255) UNIQUE,
-                username VARCHAR(50) NOT NULL,
-                user_tag VARCHAR(30) UNIQUE,
-                avatar TEXT,
-                session_token VARCHAR(64) UNIQUE,
-                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица сообщений (общий чат)
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                username VARCHAR(255) NOT NULL,
-                user_tag VARCHAR(30),
-                avatar TEXT,
-                message_text TEXT,
-                filename VARCHAR(255),
-                filepath TEXT,
-                message_type VARCHAR(50) NOT NULL,
-                is_favorite BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица личных чатов
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS private_chats (
-                id SERIAL PRIMARY KEY,
-                chat_id VARCHAR(64) UNIQUE NOT NULL,
-                user1_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                user2_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user1_id, user2_id)
-            )
-        ''')
-        
-        # Таблица личных сообщений
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS private_messages (
-                id SERIAL PRIMARY KEY,
-                chat_id VARCHAR(64) REFERENCES private_chats(chat_id) ON DELETE CASCADE,
-                sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                receiver_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                message_text TEXT,
-                filename VARCHAR(255),
-                filepath TEXT,
-                message_type VARCHAR(50) NOT NULL,
-                is_read BOOLEAN DEFAULT FALSE,
-                is_favorite BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица избранного
-        cur.execute('''
-            CREATE TABLE IF NOT EXISTS favorites (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
-                private_message_id INTEGER REFERENCES private_messages(id) ON DELETE CASCADE,
-                chat_id VARCHAR(64),
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT unique_general_favorite UNIQUE (user_id, message_id),
-                CONSTRAINT unique_private_favorite UNIQUE (user_id, private_message_id)
-            )
-        ''')
-        
-        # Индексы
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_socket ON users(socket_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_tag ON users(user_tag)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_users_session ON users(session_token)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_private_chats_users ON private_chats(user1_id, user2_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_private_chats_chat_id ON private_chats(chat_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_private_messages_chat ON private_messages(chat_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_private_messages_sender ON private_messages(sender_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_private_messages_read ON private_messages(is_read)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_favorites_message ON favorites(message_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_favorites_private ON favorites(private_message_id)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_messages_favorite ON messages(is_favorite)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_private_messages_favorite ON private_messages(is_favorite)')
-        
-        conn.commit()
-        
-        # Триггер для обновления юзернеймов в сообщениях
-        cur.execute('''
-            CREATE OR REPLACE FUNCTION update_username_in_messages()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                UPDATE messages 
-                SET user_tag = NEW.user_tag 
-                WHERE user_id = NEW.id;
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-        ''')
-        
-        cur.execute('''
-            DROP TRIGGER IF EXISTS update_messages_username ON users;
-            CREATE TRIGGER update_messages_username
-                AFTER UPDATE OF user_tag ON users
-                FOR EACH ROW
-                EXECUTE FUNCTION update_username_in_messages();
-        ''')
-        
+        cur.execute("SELECT 1")
         conn.commit()
         cur.close()
         conn.close()
-        print("✅ Все таблицы готовы")
+        print("✅ База данных подключена")
+        return True
     except Exception as e:
-        print(f"❌ Ошибка при создании таблиц: {e}")
+        print(f"❌ Ошибка подключения к БД: {e}")
+        return False
 
-init_db()
+check_db_connection()
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 def validate_tag(tag):
@@ -228,28 +116,6 @@ def update_last_seen(socket_id):
 
 # === РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ===
 def check_tag_available(tag, exclude_socket=None):
-   def check_tag_available(tag, exclude_socket=None):
-    print(f"🔍 Checking tag: {tag}, exclude: {exclude_socket}")
-    if not tag:
-        return False
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        if exclude_socket:
-            cur.execute("SELECT id FROM users WHERE user_tag = %s AND socket_id != %s", (tag, exclude_socket))
-        else:
-            cur.execute("SELECT id FROM users WHERE user_tag = %s", (tag,))
-        existing = cur.fetchone()
-        print(f"📊 Result: {existing}")
-        return existing is None
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
-    finally:
-        cur.close()
-        conn.close()
-   
-    """Проверить, свободен ли юзернейм"""
     if not tag:
         return False
     conn = get_db_connection()
@@ -267,7 +133,6 @@ def check_tag_available(tag, exclude_socket=None):
     finally:
         cur.close()
         conn.close()
-    return existing is None
 
 def create_user(socket_id, username, user_tag, avatar):
     conn = get_db_connection()
@@ -509,7 +374,6 @@ def mark_messages_as_read(chat_id, user_id):
     return updated
 
 def get_chat_info(chat_id, user_id):
-    """Получить информацию о чате"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
@@ -696,23 +560,6 @@ def get_favorites(user_id):
         })
     
     return all_favorites
-
-def check_message_favorite(user_id, message_id=None, private_message_id=None):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    if message_id:
-        cur.execute("SELECT id FROM favorites WHERE user_id = %s AND message_id = %s", (user_id, message_id))
-    elif private_message_id:
-        cur.execute("SELECT id FROM favorites WHERE user_id = %s AND private_message_id = %s", (user_id, private_message_id))
-    else:
-        cur.close()
-        conn.close()
-        return False
-    
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    return result is not None
 
 # === РАБОТА С ОБЩИМ ЧАТОМ ===
 def save_message(user_id, username, user_tag, avatar, msg_type, text=None, filename=None, filepath=None):
@@ -1317,7 +1164,6 @@ def handle_get_favorites():
 
 @socketio.on('get_chat_by_id')
 def handle_get_chat_by_id(data):
-    """Получить информацию о чате по ID для перехода к сообщению"""
     user_data = users.get(request.sid)
     if not user_data:
         return
