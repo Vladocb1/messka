@@ -228,17 +228,45 @@ def update_last_seen(socket_id):
 
 # === РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ===
 def check_tag_available(tag, exclude_socket=None):
+   def check_tag_available(tag, exclude_socket=None):
+    print(f"🔍 Checking tag: {tag}, exclude: {exclude_socket}")
     if not tag:
         return False
     conn = get_db_connection()
     cur = conn.cursor()
-    if exclude_socket:
-        cur.execute("SELECT id FROM users WHERE user_tag = %s AND socket_id != %s", (tag, exclude_socket))
-    else:
-        cur.execute("SELECT id FROM users WHERE user_tag = %s", (tag,))
-    existing = cur.fetchone()
-    cur.close()
-    conn.close()
+    try:
+        if exclude_socket:
+            cur.execute("SELECT id FROM users WHERE user_tag = %s AND socket_id != %s", (tag, exclude_socket))
+        else:
+            cur.execute("SELECT id FROM users WHERE user_tag = %s", (tag,))
+        existing = cur.fetchone()
+        print(f"📊 Result: {existing}")
+        return existing is None
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+   
+    """Проверить, свободен ли юзернейм"""
+    if not tag:
+        return False
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        if exclude_socket:
+            cur.execute("SELECT id FROM users WHERE user_tag = %s AND socket_id != %s", (tag, exclude_socket))
+        else:
+            cur.execute("SELECT id FROM users WHERE user_tag = %s", (tag,))
+        existing = cur.fetchone()
+        return existing is None
+    except Exception as e:
+        print(f"❌ Error checking tag: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
     return existing is None
 
 def create_user(socket_id, username, user_tag, avatar):
