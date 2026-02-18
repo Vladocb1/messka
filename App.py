@@ -118,9 +118,11 @@ def update_last_seen(socket_id):
 def check_tag_available(tag, exclude_socket=None):
     if not tag:
         return False
-    conn = get_db_connection()
-    cur = conn.cursor()
+    conn = None
+    cur = None
     try:
+        conn = get_db_connection()
+        cur = conn.cursor()
         if exclude_socket:
             cur.execute("SELECT id FROM users WHERE user_tag = %s AND socket_id != %s", (tag, exclude_socket))
         else:
@@ -131,8 +133,10 @@ def check_tag_available(tag, exclude_socket=None):
         print(f"❌ Error checking tag: {e}")
         return False
     finally:
-        cur.close()
-        conn.close()
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 def create_user(socket_id, username, user_tag, avatar):
     conn = get_db_connection()
