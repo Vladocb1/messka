@@ -1,70 +1,59 @@
-from flask import Flask, render_template, request, send_from_directory
-from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
+import bcrypt
+from flask import Flask, render_template, request, send_from_directory, session
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from dotenv import load_dotenv
+from urllib.parse import urlparse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.errors import UniqueViolation
 from werkzeug.utils import secure_filename
 import base64
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
 import re
 import hashlib
 import secrets
 
+load_dotenv()
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = secrets.token_hex(32)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
 socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interval=25)
 
 # === PostgreSQL подключение ===
 DATABASE_URL = os.environ.get('DATABASE_URL')
-
 if DATABASE_URL:
-    parsed_url = urlparse(DATABASE_URL)
-    DB_HOST = parsed_url.hostname
-    DB_PORT = parsed_url.port
-    DB_NAME = parsed_url.path[1:]
-    DB_USER = parsed_url.username
-    DB_PASS = parsed_url.password
-    print("✅ Подключение к базе данных на Render")
+    parsed = urlparse(DATABASE_URL)
+    DB_HOST = parsed.hostname
+    DB_PORT = parsed.port
+    DB_NAME = parsed.path[1:]
+    DB_USER = parsed.username
+    DB_PASS = parsed.password
 else:
     DB_HOST = 'localhost'
     DB_PORT = '5432'
     DB_NAME = 'messka'
-    DB_USER = 'postgres'
-    DB_PASS = 'SudoSQL'
-    print("✅ Подключение к локальной базе данных")
+    DB_USER = 'messka_user'
+    DB_PASS = 'messka'
 
 def get_db_connection():
     return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
+        host=DB_HOST, port=DB_PORT, database=DB_NAME,
+        user=DB_USER, password=DB_PASS,
         cursor_factory=RealDictCursor
     )
 
-# === ТОЛЬКО ПРОВЕРКА ПОДКЛЮЧЕНИЯ ===
-def check_db_connection():
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("✅ База данных подключена")
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка подключения к БД: {e}")
-        return False
+# === Функции паролей ===
+def hash_password(password):
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
-check_db_connection()
+def check_password(password, hashed):
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+# === Вспомогательные функции ===
 def validate_tag(tag):
     if not tag:
         return False
@@ -77,163 +66,22 @@ def generate_chat_id(user1_id, user2_id):
     ids = sorted([user1_id, user2_id])
     return hashlib.sha256(f"{ids[0]}-{ids[1]}".encode()).hexdigest()[:16]
 
-def get_user_by_socket(socket_id):
+def get_user_by_id(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, username, user_tag, avatar, session_token FROM users WHERE socket_id = %s", (socket_id,))
+    cur.execute("SELECT id, username, user_tag, avatar FROM users WHERE id = %s", (user_id,))
     user = cur.fetchone()
     cur.close()
     conn.close()
     return user
 
-def get_user_by_tag(tag):
+def update_last_seen(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, username, user_tag, avatar FROM users WHERE user_tag = %s", (tag,))
-    user = cur.fetchone()
-    cur.close()
-    conn.close()
-    return user
-
-def get_user_by_session(session_token):
-    if not session_token:
-        return None
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, username, user_tag, avatar FROM users WHERE session_token = %s", (session_token,))
-    user = cur.fetchone()
-    cur.close()
-    conn.close()
-    return user
-
-def update_last_seen(socket_id):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE socket_id = %s", (socket_id,))
+    cur.execute("UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = %s", (user_id,))
     conn.commit()
     cur.close()
     conn.close()
-
-# === РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ===
-def check_tag_available(tag, exclude_socket=None):
-    if not tag:
-        return False
-    conn = None
-    cur = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        if exclude_socket:
-            cur.execute("SELECT id FROM users WHERE user_tag = %s AND socket_id != %s", (tag, exclude_socket))
-        else:
-            cur.execute("SELECT id FROM users WHERE user_tag = %s", (tag,))
-        existing = cur.fetchone()
-        return existing is None
-    except Exception as e:
-        print(f"❌ Error checking tag: {e}")
-        return False
-    finally:
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-def create_user(socket_id, username, user_tag, avatar):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    session_token = generate_session_token()
-    try:
-        cur.execute("""
-            INSERT INTO users (socket_id, username, user_tag, avatar, session_token) 
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, username, user_tag, avatar, session_token
-        """, (socket_id, username, user_tag, avatar, session_token))
-        new_user = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {'success': True, 'user': new_user}
-    except UniqueViolation:
-        conn.rollback()
-        cur.close()
-        conn.close()
-        return {'success': False, 'error': 'tag_taken', 'message': 'Этот юзернейм уже занят'}
-    except Exception as e:
-        conn.rollback()
-        cur.close()
-        conn.close()
-        return {'success': False, 'error': str(e)}
-
-def update_user(socket_id, username, user_tag, avatar):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT id, user_tag FROM users WHERE socket_id = %s", (socket_id,))
-        old_user = cur.fetchone()
-        
-        if not old_user:
-            cur.close()
-            conn.close()
-            return {'success': False, 'error': 'user_not_found'}
-        
-        cur.execute("""
-            UPDATE users 
-            SET username = %s, user_tag = %s, avatar = %s, last_seen = CURRENT_TIMESTAMP 
-            WHERE socket_id = %s
-            RETURNING id, username, user_tag, avatar, session_token
-        """, (username, user_tag, avatar, socket_id))
-        updated = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        return {'success': True, 'user': updated, 'old_tag': old_user['user_tag']}
-    except UniqueViolation:
-        conn.rollback()
-        cur.close()
-        conn.close()
-        return {'success': False, 'error': 'tag_taken', 'message': 'Этот юзернейм уже занят'}
-    except Exception as e:
-        conn.rollback()
-        cur.close()
-        conn.close()
-        return {'success': False, 'error': str(e)}
-
-def login_by_session(socket_id, session_token):
-    user = get_user_by_session(session_token)
-    if not user:
-        return None
-    
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE users 
-        SET socket_id = %s, last_seen = CURRENT_TIMESTAMP 
-        WHERE id = %s
-        RETURNING id, username, user_tag, avatar
-    """, (socket_id, user['id']))
-    updated = cur.fetchone()
-    conn.commit()
-    cur.close()
-    conn.close()
-    
-    return updated
-
-def find_users_by_tag(search_tag):
-    if len(search_tag) < 2:
-        return []
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, username, user_tag, avatar FROM users 
-        WHERE user_tag ILIKE %s AND user_tag IS NOT NULL
-        ORDER BY last_seen DESC
-        LIMIT 20
-    """, (f'%{search_tag}%',))
-    users = cur.fetchall()
-    cur.close()
-    conn.close()
-    return users
 
 # === РАБОТА С ЛИЧНЫМИ ЧАТАМИ ===
 def get_or_create_private_chat(user1_id, user2_id):
@@ -470,7 +318,6 @@ def get_favorites(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Избранное из общего чата
     cur.execute("""
         SELECT 
             'general' as chat_type,
@@ -492,7 +339,6 @@ def get_favorites(user_id):
     """, (user_id,))
     general_favs = cur.fetchall()
     
-    # Избранное из личных чатов
     cur.execute("""
         SELECT 
             'private' as chat_type,
@@ -624,13 +470,17 @@ def get_message_history(user_id=None, limit=100):
     } for r in rows]
 
 # === СОКЕТЫ ===
-users = {}  # {socket_id: {'id': user_id, 'username': str, 'tag': str, 'avatar': str, 'token': str}}
+users = {}  # {socket_id: {'id': user_id, 'username': str, 'tag': str, 'avatar': str}}
 rooms = {}  # {chat_id: [socket_id1, socket_id2]}
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/chat')
+def chat_page():
+    return render_template('chat.html')
 
 @socketio.on('connect')
 def handle_connect():
@@ -649,99 +499,83 @@ def handle_disconnect():
         emit('user_left', user_data['username'], broadcast=True)
         print(f'👋 User left: {user_data["username"]}')
 
-@socketio.on('check_session')
-def handle_check_session(data):
-    session_token = data.get('session_token')
-    if not session_token:
-        emit('session_result', {'has_session': False})
+@socketio.on('register')
+def handle_register(data):
+    username = data.get('username')
+    user_tag = data.get('tag')
+    password = data.get('password')
+    avatar = data.get('avatar', 'default')
+    
+    if not username or not user_tag or not password:
+        emit('register_error', {'error': 'Заполните все поля'})
         return
     
-    user = login_by_session(request.sid, session_token)
+    if not validate_tag(user_tag):
+        emit('register_error', {'error': 'Некорректный юзернейм (только латиница, цифры, _, 3-20 символов)'})
+        return
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM users WHERE username = %s OR user_tag = %s", (username, user_tag))
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        emit('register_error', {'error': 'Пользователь уже существует'})
+        return
+    
+    password_hash = hash_password(password)
+    cur.execute("""
+        INSERT INTO users (username, user_tag, password_hash, avatar)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id, username, user_tag, avatar
+    """, (username, user_tag, password_hash, avatar))
+    user = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    emit('register_success', {'user': user})
+
+@socketio.on('login')
+def handle_login(data):
+    username = data.get('username')
+    password = data.get('password')
+    
+    if not username or not password:
+        emit('login_error', {'error': 'Заполните все поля'})
+        return
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, user_tag, avatar, password_hash FROM users WHERE username = %s", (username,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    
+    if not user or not check_password(password, user['password_hash']):
+        emit('login_error', {'error': 'Неверное имя или пароль'})
+        return
+    
+    emit('login_success', {'user': {
+        'id': user['id'],
+        'username': user['username'],
+        'tag': user['user_tag'],
+        'avatar': user['avatar']
+    }})
+
+@socketio.on('set_user')
+def handle_set_user(data):
+    user_id = data.get('user_id')
+    if not user_id:
+        return
+    
+    user = get_user_by_id(user_id)
     if user:
         users[request.sid] = {
             'id': user['id'],
             'username': user['username'],
             'tag': user['user_tag'],
-            'avatar': user['avatar'],
-            'token': session_token
-        }
-        
-        emit('session_result', {
-            'has_session': True,
-            'user': {
-                'id': user['id'],
-                'username': user['username'],
-                'tag': user['user_tag'],
-                'avatar': user['avatar'],
-                'token': session_token
-            }
-        })
-        
-        emit('user_joined', {
-            'username': user['username'],
-            'tag': user['user_tag'],
             'avatar': user['avatar']
-        }, broadcast=True)
-        
-        emit('message_history', get_message_history(user['id']))
-        print(f'✨ User logged in via session: {user["username"]} (@{user["user_tag"]})')
-
-@socketio.on('check_username')
-def handle_check_username(data):
-    tag = data.get('tag', '').lower().strip()
-    
-    if not tag:
-        emit('username_check_result', {'available': False, 'reason': 'empty'})
-        return
-    
-    if not re.match(r'^[a-z0-9_]+$', tag):
-        emit('username_check_result', {'available': False, 'reason': 'invalid_chars'})
-        return
-    
-    if len(tag) < 3:
-        emit('username_check_result', {'available': False, 'reason': 'too_short'})
-        return
-    
-    if len(tag) > 20:
-        emit('username_check_result', {'available': False, 'reason': 'too_long'})
-        return
-    
-    available = check_tag_available(tag, request.sid if get_user_by_socket(request.sid) else None)
-    emit('username_check_result', {
-        'available': available,
-        'tag': tag,
-        'reason': 'ok' if available else 'taken'
-    })
-
-@socketio.on('register')
-def handle_register(data):
-    username = data.get('username', '').strip()
-    user_tag = data.get('tag', '').lower().strip()
-    avatar = data.get('avatar', 'default')
-    
-    if not username or len(username) > 50:
-        emit('register_error', {'error': 'invalid_name', 'message': 'Некорректное имя'})
-        return
-    
-    if not validate_tag(user_tag):
-        emit('register_error', {'error': 'invalid_tag', 'message': 'Некорректный юзернейм'})
-        return
-    
-    existing = get_user_by_socket(request.sid)
-    
-    if existing:
-        result = update_user(request.sid, username, user_tag, avatar)
-    else:
-        result = create_user(request.sid, username, user_tag, avatar)
-    
-    if result['success']:
-        user = result['user']
-        users[request.sid] = {
-            'id': user['id'],
-            'username': user['username'],
-            'tag': user['user_tag'],
-            'avatar': user['avatar'],
-            'token': user['session_token']
         }
         
         emit('user_joined', {
@@ -750,71 +584,25 @@ def handle_register(data):
             'avatar': user['avatar']
         }, broadcast=True)
         
-        emit('register_success', {
-            'user': {
-                'id': user['id'],
-                'username': user['username'],
-                'tag': user['user_tag'],
-                'avatar': user['avatar'],
-                'token': user['session_token']
-            }
-        })
-        
         emit('message_history', get_message_history(user['id']))
-        print(f'✨ User registered: {user["username"]} (@{user["user_tag"]})')
-    else:
-        emit('register_error', result)
+        socketio.emit('private_chats_list', get_user_chats(user['id']))
 
-@socketio.on('update_profile')
-def handle_update_profile(data):
+@socketio.on('get_private_chats')
+def handle_get_private_chats():
     user_data = users.get(request.sid)
     if not user_data:
         return
     
-    old_username = user_data['username']
-    old_tag = user_data['tag']
-    old_avatar = user_data['avatar']
-    new_username = data.get('username', old_username)
-    new_tag = data.get('tag', old_tag)
-    new_avatar = data.get('avatar', old_avatar)
-    
-    if new_tag != old_tag and not validate_tag(new_tag):
-        emit('profile_error', {'error': 'invalid_tag', 'message': 'Некорректный юзернейм'})
-        return
-    
-    result = update_user(request.sid, new_username, new_tag, new_avatar)
-    
-    if result['success']:
-        user = result['user']
-        users[request.sid]['username'] = user['username']
-        users[request.sid]['tag'] = user['user_tag']
-        users[request.sid]['avatar'] = user['avatar']
-        
-        emit('message_history', get_message_history(user['id']), broadcast=True)
-        
-        emit('profile_updated', {
-            'socket_id': request.sid,
-            'old_username': old_username if old_username != user['username'] else None,
-            'new_username': user['username'] if old_username != user['username'] else None,
-            'old_tag': old_tag if old_tag != user['user_tag'] else None,
-            'new_tag': user['user_tag'] if old_tag != user['user_tag'] else None,
-            'old_avatar': old_avatar if old_avatar != user['avatar'] else None,
-            'new_avatar': user['avatar'] if old_avatar != user['avatar'] else None
-        }, broadcast=True)
-        
-        print(f'📝 Profile updated: {user["username"]} (@{user["user_tag"]})')
-    else:
-        emit('profile_error', result)
-
-@socketio.on('search_users')
-def handle_search_users(data):
-    search_tag = data.get('tag', '')
-    if len(search_tag) < 2:
-        emit('search_results', [])
-        return
-    
-    found_users = find_users_by_tag(search_tag)
-    emit('search_results', found_users)
+    chats = get_user_chats(user_data['id'])
+    emit('private_chats_list', [{
+        'chat_id': chat['chat_id'],
+        'username': chat['other_username'],
+        'tag': chat['other_tag'],
+        'avatar': chat['other_avatar'],
+        'last_message': chat['last_message'],
+        'last_message_time': chat['last_message_time'].strftime('%H:%M') if chat['last_message_time'] else '',
+        'unread_count': chat['unread_count']
+    } for chat in chats])
 
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):
@@ -827,7 +615,13 @@ def handle_start_private_chat(data):
         emit('private_chat_error', {'error': 'empty_tag'})
         return
     
-    target_user = get_user_by_tag(target_tag)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, username, user_tag, avatar FROM users WHERE user_tag = %s", (target_tag,))
+    target_user = cur.fetchone()
+    cur.close()
+    conn.close()
+    
     if not target_user:
         emit('private_chat_error', {'error': 'user_not_found', 'message': 'Пользователь не найден'})
         return
@@ -860,36 +654,87 @@ def handle_start_private_chat(data):
         'history': history
     })
 
-@socketio.on('get_private_chats')
-def handle_get_private_chats():
+@socketio.on('send_message')
+def handle_message(data):
     user_data = users.get(request.sid)
     if not user_data:
         return
     
-    chats = get_user_chats(user_data['id'])
+    message = data.get('message', '').strip()
+    if not message:
+        return
     
-    emit('private_chats_list', [{
-        'chat_id': chat['chat_id'],
-        'username': chat['other_username'],
-        'tag': chat['other_tag'],
-        'avatar': chat['other_avatar'],
-        'last_message': chat['last_message'],
-        'last_message_time': chat['last_message_time'].strftime('%H:%M') if chat['last_message_time'] else '',
-        'unread_count': chat['unread_count']
-    } for chat in chats])
+    update_last_seen(user_data['id'])
+    
+    msg_id = save_message(
+        user_id=user_data['id'],
+        username=user_data['username'],
+        user_tag=user_data['tag'],
+        avatar=user_data['avatar'],
+        msg_type='text',
+        text=message
+    )
+    
+    emit('new_message', {
+        'id': msg_id,
+        'user': user_data['username'],
+        'tag': user_data['tag'],
+        'avatar': user_data['avatar'],
+        'text': message,
+        'type': 'text',
+        'is_favorite': False,
+        'time': datetime.now().strftime('%H:%M')
+    }, broadcast=True)
 
-@socketio.on('get_private_chat_history')
-def handle_get_private_chat_history(data):
+@socketio.on('send_file')
+def handle_file(data):
     user_data = users.get(request.sid)
     if not user_data:
         return
     
-    chat_id = data.get('chat_id')
-    if not chat_id:
+    filename = data.get('filename', '')
+    file_data = data.get('file', '')
+    
+    if not filename or not file_data:
         return
     
-    history = get_private_chat_history(chat_id, user_data['id'])
-    emit('get_private_chat_history', history)
+    update_last_seen(user_data['id'])
+    
+    try:
+        if ',' in file_data:
+            file_data = file_data.split(',')[1]
+        
+        filename = secure_filename(filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        with open(filepath, 'wb') as f:
+            f.write(base64.b64decode(file_data))
+        
+        msg_id = save_message(
+            user_id=user_data['id'],
+            username=user_data['username'],
+            user_tag=user_data['tag'],
+            avatar=user_data['avatar'],
+            msg_type='file',
+            filename=filename,
+            filepath=f'/uploads/{filename}'
+        )
+        
+        emit('new_message', {
+            'id': msg_id,
+            'user': user_data['username'],
+            'tag': user_data['tag'],
+            'avatar': user_data['avatar'],
+            'filename': filename,
+            'filepath': f'/uploads/{filename}',
+            'type': 'file',
+            'is_favorite': False,
+            'time': datetime.now().strftime('%H:%M')
+        }, broadcast=True)
+        
+    except Exception as e:
+        print(f'❌ Error sending file: {e}')
+        emit('file_error', {'error': 'Ошибка при отправке файла'})
 
 @socketio.on('send_private_message')
 def handle_send_private_message(data):
@@ -1004,8 +849,8 @@ def handle_send_private_file(data):
         print(f'❌ Error sending private file: {e}')
         emit('private_file_error', {'error': 'Ошибка при отправке файла'})
 
-@socketio.on('mark_chat_read')
-def handle_mark_chat_read(data):
+@socketio.on('get_private_chat_history')
+def handle_get_private_chat_history(data):
     user_data = users.get(request.sid)
     if not user_data:
         return
@@ -1014,7 +859,8 @@ def handle_mark_chat_read(data):
     if not chat_id:
         return
     
-    updated = mark_messages_as_read(chat_id, user_data['id'])
+    history = get_private_chat_history(chat_id, user_data['id'])
+    emit('get_private_chat_history', history)
 
 @socketio.on('join_private_chat')
 def handle_join_private_chat(data):
@@ -1037,96 +883,17 @@ def handle_leave_private_chat(data):
     if chat_id in rooms and request.sid in rooms[chat_id]:
         rooms[chat_id].remove(request.sid)
 
-@socketio.on('send_message')
-def handle_message(data):
+@socketio.on('mark_chat_read')
+def handle_mark_chat_read(data):
     user_data = users.get(request.sid)
     if not user_data:
         return
     
-    message = data.get('message', '').strip()
-    if not message:
+    chat_id = data.get('chat_id')
+    if not chat_id:
         return
     
-    update_last_seen(request.sid)
-    
-    msg_id = save_message(
-        user_id=user_data['id'],
-        username=user_data['username'],
-        user_tag=user_data['tag'],
-        avatar=user_data['avatar'],
-        msg_type='text',
-        text=message
-    )
-    
-    emit('new_message', {
-        'id': msg_id,
-        'user': user_data['username'],
-        'tag': user_data['tag'],
-        'avatar': user_data['avatar'],
-        'text': message,
-        'type': 'text',
-        'is_favorite': False,
-        'time': datetime.now().strftime('%H:%M')
-    }, broadcast=True)
-    print(f'💬 {user_data["username"]} (@{user_data["tag"]}): {message[:30]}...')
-
-@socketio.on('send_file')
-def handle_file(data):
-    user_data = users.get(request.sid)
-    if not user_data:
-        return
-    
-    filename = data.get('filename', '')
-    file_data = data.get('file', '')
-    
-    if not filename or not file_data:
-        return
-    
-    update_last_seen(request.sid)
-    
-    try:
-        if ',' in file_data:
-            file_data = file_data.split(',')[1]
-        
-        filename = secure_filename(filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        
-        with open(filepath, 'wb') as f:
-            f.write(base64.b64decode(file_data))
-        
-        msg_id = save_message(
-            user_id=user_data['id'],
-            username=user_data['username'],
-            user_tag=user_data['tag'],
-            avatar=user_data['avatar'],
-            msg_type='file',
-            filename=filename,
-            filepath=f'/uploads/{filename}'
-        )
-        
-        emit('new_message', {
-            'id': msg_id,
-            'user': user_data['username'],
-            'tag': user_data['tag'],
-            'avatar': user_data['avatar'],
-            'filename': filename,
-            'filepath': f'/uploads/{filename}',
-            'type': 'file',
-            'is_favorite': False,
-            'time': datetime.now().strftime('%H:%M')
-        }, broadcast=True)
-        print(f'📎 {user_data["username"]} (@{user_data["tag"]}) sent file: {filename}')
-        
-    except Exception as e:
-        print(f'❌ Error sending file: {e}')
-        emit('file_error', {'error': 'Ошибка при отправке файла'})
-
-@socketio.on('get_message_history')
-def handle_get_message_history():
-    user_data = users.get(request.sid)
-    user_id = user_data['id'] if user_data else None
-    history = get_message_history(user_id)
-    emit('message_history', history)
+    updated = mark_messages_as_read(chat_id, user_data['id'])
 
 @socketio.on('toggle_favorite')
 def handle_toggle_favorite(data):
@@ -1166,30 +933,59 @@ def handle_get_favorites():
     favorites = get_favorites(user_data['id'])
     emit('favorites_list', favorites)
 
-@socketio.on('get_chat_by_id')
-def handle_get_chat_by_id(data):
+@socketio.on('get_message_history')
+def handle_get_message_history():
+    user_data = users.get(request.sid)
+    user_id = user_data['id'] if user_data else None
+    history = get_message_history(user_id)
+    emit('message_history', history)
+
+@socketio.on('search_users')
+def handle_search_users(data):
+    search_tag = data.get('tag', '')
+    if len(search_tag) < 2:
+        emit('search_results', [])
+        return
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, username, user_tag, avatar FROM users 
+        WHERE user_tag ILIKE %s AND user_tag IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 20
+    """, (f'%{search_tag}%',))
+    users_list = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    emit('search_results', users_list)
+
+@socketio.on('update_profile')
+def handle_update_profile(data):
     user_data = users.get(request.sid)
     if not user_data:
         return
     
-    chat_id = data.get('chat_id')
-    message_id = data.get('message_id')
-    
-    if not chat_id or chat_id == 'general':
+    new_avatar = data.get('avatar')
+    if not new_avatar:
         return
     
-    chat_info = get_chat_info(chat_id, user_data['id'])
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET avatar = %s WHERE id = %s", (new_avatar, user_data['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
     
-    if chat_info:
-        emit('chat_by_id_result', {
-            'chat_id': chat_id,
-            'message_id': message_id,
-            'user': {
-                'username': chat_info['username'],
-                'tag': chat_info['tag'],
-                'avatar': chat_info['avatar']
-            }
-        })
+    user_data['avatar'] = new_avatar
+    
+    emit('profile_updated', {
+        'user_id': user_data['id'],
+        'username': user_data['username'],
+        'tag': user_data['tag'],
+        'avatar': new_avatar
+    }, broadcast=True)
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
